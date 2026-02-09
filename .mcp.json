@@ -1,0 +1,10 @@
+{
+  "mx3-gym": {
+    "command": "npx",
+    "args": ["tsx", "$CLAUDE_PLUGIN_ROOT/src/server.ts"],
+    "env": {
+      "MX3_USERNAME": "${MX3_USERNAME}",
+      "MX3_PASSWORD": "${MX3_PASSWORD}"
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "mx3-gym",
+  "version": "0.1.0",
+  "description": "MCP server for MX3 Fitness gym booking at Noe Valley. Check schedules, book slots, cancel reservations, and view credits.",
+  "author": {
+    "name": "Ryan Orban",
+    "url": "https://github.com/orban"
+  },
+  "repository": "https://github.com/orban/mx3-gym-mcp",
+  "license": "MIT",
+  "keywords": [
+    "gym",
+    "booking",
+    "mx3-fitness",
+    "mcp",
+    "scheduling"
+  ]
+}
