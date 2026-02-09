@@ -43,7 +43,7 @@ server.tool(
       lines.push(`Available dates: ${dates.join(', ')}`);
       lines.push('');
 
-      // Group by station type, then by station
+      // Group by station type
       const byType = new Map<string, typeof slots>();
       for (const slot of slots) {
         const group = byType.get(slot.stationType) || [];
@@ -55,19 +55,38 @@ server.tool(
         const label = type === 'private_station' ? 'Private Stations (1hr)' : type === 'open_gym' ? 'Open Gym (30min)' : 'Cardio (30min)';
         lines.push(`## ${label}`);
 
-        const byStation = new Map<string, typeof slots>();
+        // Collect station names (columns) and available times (rows)
+        const stationNames: string[] = [];
+        const availableByStation = new Map<string, Set<string>>();
         for (const slot of typeSlots) {
-          const group = byStation.get(slot.stationName) || [];
-          group.push(slot);
-          byStation.set(slot.stationName, group);
+          if (!availableByStation.has(slot.stationName)) {
+            stationNames.push(slot.stationName);
+            availableByStation.set(slot.stationName, new Set());
+          }
+          if (slot.status === 'available') {
+            availableByStation.get(slot.stationName)!.add(slot.time);
+          }
         }
 
-        for (const [name, stationSlots] of byStation) {
-          const available = stationSlots.filter(s => s.status === 'available');
-          const line = available.length > 0
-            ? `${name}: ${available.map(s => s.time).join(', ')}`
-            : `${name}: fully booked`;
-          lines.push(line);
+        // Collect all unique available times across stations, sorted chronologically
+        const allTimes = new Set<string>();
+        for (const times of availableByStation.values()) {
+          for (const t of times) allTimes.add(t);
+        }
+        const sortedTimes = [...allTimes].sort(compareTimeStrings);
+
+        if (sortedTimes.length === 0) {
+          lines.push('Fully booked');
+        } else {
+          // Build markdown table: Time | Station1 | Station2 | ...
+          lines.push(`| Time | ${stationNames.join(' | ')} |`);
+          lines.push(`|------|${stationNames.map(() => ':----:').join('|')}|`);
+          for (const time of sortedTimes) {
+            const cells = stationNames.map(name =>
+              availableByStation.get(name)!.has(time) ? '✓' : ''
+            );
+            lines.push(`| ${time} | ${cells.join(' | ')} |`);
+          }
         }
         lines.push('');
       }
@@ -151,6 +170,22 @@ server.tool(
     }
   }
 );
+
+/** Sort "h:mmam/pm" strings chronologically. */
+function compareTimeStrings(a: string, b: string): number {
+  return timeToMinutes(a) - timeToMinutes(b);
+}
+
+function timeToMinutes(t: string): number {
+  const match = t.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+  if (!match) return 0;
+  let [, hStr, mStr, period] = match;
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  if (period.toLowerCase() === 'am' && h === 12) h = 0;
+  if (period.toLowerCase() === 'pm' && h !== 12) h += 12;
+  return h * 60 + m;
+}
 
 // --- Start server ---
 async function main() {
