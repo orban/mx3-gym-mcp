@@ -6,14 +6,18 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "test": "vitest run",
+    "test:flake": "tsx scripts/test-flakiness.ts",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "poller": "tsx src/poller.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "better-sqlite3": "^12.6.2",
     "cheerio": "^1.0.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
