@@ -1,7 +1,9 @@
 import { parseSchedule, parseCredits, parseReservations, parseBookingResponse, isSignInRequired, parseAvailableDates } from './parser.js';
 import { STATIONS, STATION_BY_NAME, type MX3ClientConfig, type TimeSlot, type BookingResult, type Reservation } from './types.js';
+import { createLogger } from './logger.js';
 
 const NOE_VALLEY_LOC_ID = '51550';
+const logger = createLogger('mx3-client');
 
 export class MX3Client {
   private baseUrl: string;
@@ -131,19 +133,25 @@ export class MX3Client {
   private async postWithAuth(path: string, body: string, isRetry = false): Promise<string> {
     // Login if we don't have cookies yet
     if (this.cookies.size === 0) {
+      logger.info('mx3.auth.login_required', 'Missing session cookies, authenticating', {
+        path,
+        isRetry,
+      });
       await this.login();
     }
 
-    const response = await this.post(path, body);
+    const response = await this.post(path, body, isRetry);
 
     // Check for session expiry
     if (isSignInRequired(response) && !isRetry) {
+      logger.warn('mx3.auth.session_expired', 'Session expired, retrying with re-authentication', { path });
       this.cookies.clear();
       await this.login();
       return this.postWithAuth(path, body, true);
     }
 
     if (isSignInRequired(response) && isRetry) {
+      logger.error('mx3.auth.reauth_failed', 'Session expired and re-authentication failed', undefined, { path });
       throw new Error('Session expired and re-authentication failed');
     }
 
@@ -151,6 +159,8 @@ export class MX3Client {
   }
 
   private async login(): Promise<void> {
+    logger.info('mx3.auth.login_start', 'Starting MX3 authentication');
+
     // Field names match the AccelSite login form exactly:
     // - userName (camelCase, not lowercase)
     // - loginReturnURL and formSubmitFrom are required hidden fields
@@ -173,17 +183,33 @@ export class MX3Client {
     }
 
     if (this.cookies.size < 2) {
+      logger.error('mx3.auth.login_failed', 'Login failed: no session cookies received');
       throw new Error('Login failed: no session cookies received');
     }
+
+    logger.info('mx3.auth.login_success', 'MX3 authentication successful', {
+      cookieCount: this.cookies.size,
+    });
   }
 
-  private async post(path: string, body: string): Promise<string> {
-    const response = await this.rawFetch(path, body);
+  private async post(path: string, body: string, isRetry = false): Promise<string> {
+    const response = await this.rawFetch(path, body, isRetry);
     this.extractCookies(response);
-    return await response.text();
+    const text = await response.text();
+
+    if (!response.ok) {
+      logger.warn('mx3.http.non_ok_response', 'Received non-OK HTTP response', {
+        path,
+        status: response.status,
+        statusText: response.statusText,
+        isRetry,
+      });
+    }
+
+    return text;
   }
 
-  private async rawFetch(path: string, body: string): Promise<Response> {
+  private async rawFetch(path: string, body: string, isRetry = false): Promise<Response> {
     const url = `${this.baseUrl}${path}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -197,14 +223,29 @@ export class MX3Client {
       headers['Cookie'] = cookieStr;
     }
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers,
-      body,
-      redirect: 'manual',
-    });
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        redirect: 'manual',
+      });
 
-    return response;
+      logger.debug('mx3.http.request', 'HTTP request completed', {
+        path,
+        status: response.status,
+        redirected: response.redirected,
+        isRetry,
+      });
+
+      return response;
+    } catch (error) {
+      logger.error('mx3.http.request_failed', 'HTTP request failed', error, {
+        path,
+        isRetry,
+      });
+      throw error;
+    }
   }
 
   private extractCookies(response: Response): void {
