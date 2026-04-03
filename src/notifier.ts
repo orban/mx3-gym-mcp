@@ -2,6 +2,9 @@ import { execFile } from 'child_process';
 import type { ChangeEvent } from './types.js';
 import { timeToMinutes, matchStationPattern, STATIONS } from './types.js';
 import type { WatchRow } from './db.js';
+import { createLogger, type Logger } from './logger.js';
+
+const logger = createLogger('notifier');
 
 /** Check if a change event matches a watch */
 export function matchesWatch(event: ChangeEvent, watch: WatchRow): boolean {
@@ -37,7 +40,7 @@ export function findMatchingWatches(event: ChangeEvent, watches: WatchRow[]): Wa
 }
 
 /** Send a macOS notification for a slot opening. Fire-and-forget. */
-export function sendNotification(event: ChangeEvent): void {
+export function sendNotification(event: ChangeEvent, notificationLogger: Logger = logger): void {
   const station = STATIONS[event.stationId];
   const stationType = station?.type === 'private_station' ? 'Private Station' : station?.type === 'open_gym' ? 'Open Gym' : 'Cardio';
   const title = 'MX3 Slot Available!';
@@ -47,19 +50,42 @@ export function sendNotification(event: ChangeEvent): void {
     '-e',
     `display notification "${message}" with title "${title}" sound name "Glass"`,
   ], (err) => {
-    if (err) console.error('[notify] osascript error:', err.message);
+    if (err) {
+      notificationLogger.error('notifier.osascript.failed', 'Notification subprocess failed', err, {
+        stationId: event.stationId,
+        stationName: event.stationName,
+        date: event.date,
+        time: event.time,
+      });
+      return;
+    }
+    notificationLogger.debug('notifier.osascript.sent', 'Notification dispatched', {
+      stationId: event.stationId,
+      stationName: event.stationName,
+      date: event.date,
+      time: event.time,
+    });
   });
 }
 
 /** Process change events against watches, send notifications for matches */
-export function processNotifications(events: ChangeEvent[], watches: WatchRow[]): number {
+export function processNotifications(
+  events: ChangeEvent[],
+  watches: WatchRow[],
+  notificationLogger: Logger = logger,
+): number {
   let count = 0;
   for (const event of events) {
     const matches = findMatchingWatches(event, watches);
     if (matches.length > 0) {
-      sendNotification(event);
+      sendNotification(event, notificationLogger);
       count++;
     }
   }
+  notificationLogger.info('notifier.processed', 'Processed notification events', {
+    eventCount: events.length,
+    watchCount: watches.length,
+    sentCount: count,
+  });
   return count;
 }
