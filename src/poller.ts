@@ -52,6 +52,7 @@ export async function runPollOnce(context: PollerContext, state: PollerState): P
 
   const startedAt = nowIso(nowFn);
   const pollId = insertPollRun(context.db, startedAt);
+  let pollRecorded = false;
 
   pollLogger.info('poller.poll.started', 'Poll run started', {
     pollId,
@@ -117,6 +118,7 @@ export async function runPollOnce(context: PollerContext, state: PollerState): P
     });
 
     txn();
+    pollRecorded = true;
 
     const watches = getActiveWatches(context.db);
     const typedChanges = allChangeEvents.map((change) => {
@@ -136,7 +138,15 @@ export async function runPollOnce(context: PollerContext, state: PollerState): P
 
     let notificationCount = 0;
     if (watches.length > 0 && typedChanges.length > 0) {
-      notificationCount = notify(typedChanges, watches, pollLogger);
+      try {
+        notificationCount = notify(typedChanges, watches, pollLogger);
+      } catch (error) {
+        pollLogger.error('poller.notifications.failed', 'Notification processing failed after poll success', error, {
+          pollId,
+          watchCount: watches.length,
+          changeCount: typedChanges.length,
+        });
+      }
     }
 
     state.consecutiveFailures = 0;
@@ -152,17 +162,24 @@ export async function runPollOnce(context: PollerContext, state: PollerState): P
     });
   } catch (error) {
     const finishedAt = nowIso(nowFn);
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    finishPollRun(context.db, pollId, finishedAt, [], 0, errorMsg);
+    if (!pollRecorded) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      finishPollRun(context.db, pollId, finishedAt, [], 0, errorMsg);
 
-    state.consecutiveFailures += 1;
-    pollLogger.error('poller.poll.failed', 'Poll run failed', error, {
+      state.consecutiveFailures += 1;
+      pollLogger.error('poller.poll.failed', 'Poll run failed', error, {
+        pollId,
+        finishedAt,
+        consecutiveFailures: state.consecutiveFailures,
+      });
+
+      throw error;
+    }
+
+    pollLogger.error('poller.poll.post_success_failure', 'Post-success poll task failed', error, {
       pollId,
       finishedAt,
-      consecutiveFailures: state.consecutiveFailures,
     });
-
-    throw error;
   }
 }
 

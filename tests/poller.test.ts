@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { openDatabase } from '../src/db.js';
+import { addWatch, openDatabase } from '../src/db.js';
 import { createLogger, type LogEntry } from '../src/logger.js';
 import { runPollOnce, runLoopIteration, type PollerState } from '../src/poller.js';
 import type { TimeSlot } from '../src/types.js';
@@ -107,5 +107,51 @@ describe('poller logging', () => {
     expect(backoff?.level).toBe('warn');
     expect(backoff?.context?.consecutiveFailures).toBe(1);
     expect(backoff?.context?.waitMs).toBe(10_000);
+  });
+
+  it('keeps poll success persisted when notifier fails after changes', async () => {
+    const db = openDatabase(':memory:');
+    const entries: LogEntry[] = [];
+    const logger = createLogger('test-poller', {
+      level: 'debug',
+      writer: (entry) => entries.push(entry),
+    });
+
+    addWatch(db, { stationPattern: '*' });
+
+    let callCount = 0;
+    const client = {
+      async getSchedule(date?: string) {
+        callCount += 1;
+        if (callCount === 1 || callCount === 3) {
+          return { dates: ['2025-03-03'], slots: [] };
+        }
+        return {
+          dates: ['2025-03-03'],
+          slots: [makeSlot({ date, status: callCount === 2 ? 'unavailable' : 'available' })],
+        };
+      },
+    };
+
+    const notifier = () => {
+      throw new Error('notify failed');
+    };
+
+    const state: PollerState = { consecutiveFailures: 0 };
+
+    await runPollOnce({ client, db, logger, notifier }, state);
+    await runPollOnce({ client, db, logger, notifier }, state);
+
+    const latestPoll = db.prepare(
+      'SELECT slot_count as slotCount, error FROM poll_runs ORDER BY id DESC LIMIT 1'
+    ).get() as { slotCount: number; error: string | null };
+
+    expect(latestPoll.slotCount).toBe(1);
+    expect(latestPoll.error).toBeNull();
+    expect(state.consecutiveFailures).toBe(0);
+
+    const notificationFailure = entries.find((entry) => entry.event === 'poller.notifications.failed');
+    expect(notificationFailure?.level).toBe('error');
+    expect(notificationFailure?.error?.message).toContain('notify failed');
   });
 });
