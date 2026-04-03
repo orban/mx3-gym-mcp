@@ -4,16 +4,14 @@ import { getChanges, getTrends, getPopularity } from '../src/analytics.js';
 import type Database from 'better-sqlite3';
 
 let db: Database.Database;
-
-// Use fixed "now" dates relative to what SQLite's date('now') returns at test time.
-// We insert data with explicit dates so tests are deterministic.
+const FIXED_TODAY = '2026-02-10';
 
 function today(): string {
-  return new Date().toISOString().slice(0, 10);
+  return FIXED_TODAY;
 }
 
 function daysAgo(n: number): string {
-  const d = new Date();
+  const d = new Date(`${FIXED_TODAY}T00:00:00Z`);
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 }
@@ -136,7 +134,7 @@ describe('getChanges', () => {
 
 describe('getTrends', () => {
   it('returns daily booking/cancellation counts', () => {
-    const results = getTrends(db);
+    const results = getTrends(db, { now: FIXED_TODAY });
     expect(results.length).toBe(2);
 
     // date1 (daysAgo(1)): 2 bookings, 0 cancellations
@@ -155,14 +153,13 @@ describe('getTrends', () => {
   });
 
   it('filters by daysBack', () => {
-    // daysBack=0 means only events from today onward (date('now', '-0 days') = today)
-    const results = getTrends(db, { daysBack: 0 });
+    const results = getTrends(db, { daysBack: 0, now: FIXED_TODAY });
     // Only today's changes should appear
     expect(results.every(r => r.date >= today())).toBe(true);
   });
 
   it('filters by station', () => {
-    const results = getTrends(db, { station: 'Open Gym 1' });
+    const results = getTrends(db, { station: 'Open Gym 1', now: FIXED_TODAY });
     // date1: 1 booking; date2: 1 booking, 1 cancellation
     expect(results.length).toBe(2);
 
@@ -180,7 +177,7 @@ describe('getTrends', () => {
 
 describe('getPopularity', () => {
   it('groups by station with correct counts', () => {
-    const results = getPopularity(db, { groupBy: 'station' });
+    const results = getPopularity(db, { groupBy: 'station', now: FIXED_TODAY });
     expect(results.length).toBeGreaterThanOrEqual(2);
 
     const noe1 = results.find(r => r.group === 'Noe 1');
@@ -196,7 +193,7 @@ describe('getPopularity', () => {
   });
 
   it('groups by time', () => {
-    const results = getPopularity(db, { groupBy: 'time' });
+    const results = getPopularity(db, { groupBy: 'time', now: FIXED_TODAY });
     expect(results.length).toBeGreaterThanOrEqual(2);
 
     // Every result should have a time-like group value
@@ -212,7 +209,7 @@ describe('getPopularity', () => {
   });
 
   it('groups by day_of_week', () => {
-    const results = getPopularity(db, { groupBy: 'day_of_week' });
+    const results = getPopularity(db, { groupBy: 'day_of_week', now: FIXED_TODAY });
     expect(results.length).toBeGreaterThanOrEqual(1);
 
     // All groups should be day names
@@ -223,7 +220,7 @@ describe('getPopularity', () => {
   });
 
   it('filters by stationType', () => {
-    const results = getPopularity(db, { groupBy: 'station', stationType: 'open_gym' });
+    const results = getPopularity(db, { groupBy: 'station', stationType: 'open_gym', now: FIXED_TODAY });
     // Should only contain Open Gym stations
     for (const r of results) {
       expect(r.group).toMatch(/^Open Gym/);
@@ -232,7 +229,7 @@ describe('getPopularity', () => {
   });
 
   it('returns sorted by bookingCount descending', () => {
-    const results = getPopularity(db, { groupBy: 'station' });
+    const results = getPopularity(db, { groupBy: 'station', now: FIXED_TODAY });
     for (let i = 1; i < results.length; i++) {
       expect(results[i - 1].bookingCount).toBeGreaterThanOrEqual(results[i].bookingCount);
     }
