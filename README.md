@@ -96,6 +96,12 @@ npm test             # Run tests
 npm start            # Start MCP server (requires MX3_USERNAME, MX3_PASSWORD)
 ```
 
+## Logging
+
+Runtime paths emit structured JSON logs with stable event names for server startup/tool execution, poller lifecycle, notifications, and MX3 auth/retry boundaries. Sensitive fields such as credentials, cookies, tokens, and request bodies are redacted automatically.
+
+See [docs/logging-audit.md](/Users/ryo/dev/scratch/mx3-gym-api/docs/logging-audit.md) for the event conventions and poller debugging examples.
+
 ## How It Works
 
 The MX3 Fitness platform uses a legacy PHP/HTML system (AccelSite) without a JSON API. This server:

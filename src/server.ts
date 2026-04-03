@@ -5,12 +5,15 @@ import { MX3Client } from './mx3-client.js';
 import { STATIONS, compareTimeStrings } from './types.js';
 import { openDatabase, addWatch, removeWatch, listWatches } from './db.js';
 import { getChanges, getTrends, getPopularity } from './analytics.js';
+import { logger } from './logger.js';
 
 const username = process.env.MX3_USERNAME;
 const password = process.env.MX3_PASSWORD;
 
 if (!username || !password) {
-  console.error('MX3_USERNAME and MX3_PASSWORD environment variables are required');
+  logger.error('MX3 server startup failed due to missing credentials', {
+    event: 'server.startup.missing_credentials',
+  });
   process.exit(1);
 }
 
@@ -25,12 +28,38 @@ const server = new McpServer({
   version: '0.1.0',
 });
 
+function logToolStart(tool: string, input: Record<string, unknown>): void {
+  logger.info('MCP tool invocation started', {
+    event: 'server.tool.start',
+    tool,
+    input,
+  });
+}
+
+function logToolComplete(tool: string, details: Record<string, unknown>): void {
+  logger.info('MCP tool invocation completed', {
+    event: 'server.tool.complete',
+    tool,
+    ...details,
+  });
+}
+
+function logToolFailure(tool: string, input: Record<string, unknown>, error: unknown): void {
+  logger.error('MCP tool invocation failed', {
+    event: 'server.tool.failed',
+    tool,
+    input,
+    error,
+  });
+}
+
 // --- Tool: get_schedule ---
 server.tool(
   'get_schedule',
   'Get gym slot availability at MX3 Noe Valley. Shows all stations and their booking status for a given date. All times are Pacific Time.',
   { date: z.string().optional().describe('Date in YYYY-MM-DD format. Defaults to today.') },
   async ({ date }) => {
+    logToolStart('get_schedule', { date });
     try {
       const { slots, dates } = await client.getSchedule(date);
       const credits = await client.getCredits();
@@ -93,8 +122,16 @@ server.tool(
         lines.push('');
       }
 
+      logToolComplete('get_schedule', {
+        requestedDate: date ?? null,
+        resolvedDate: targetDate,
+        dateCount: dates.length,
+        slotCount: slots.length,
+        creditCount: credits,
+      });
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {
+      logToolFailure('get_schedule', { date }, error);
       return { content: [{ type: 'text', text: `Error fetching schedule: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -110,13 +147,28 @@ server.tool(
     time: z.string().describe('Time in h:mmam/pm format (e.g. "5:00am", "1:30pm")'),
   },
   async ({ station, date, time }) => {
+    logToolStart('book_slot', { station, date, time });
     try {
       const result = await client.bookSlot(station, date, time);
       if (result.success) {
+        logToolComplete('book_slot', {
+          station,
+          date,
+          time,
+          success: true,
+        });
         return { content: [{ type: 'text', text: `Booked ${station} on ${date} at ${time}` }] };
       }
+      logger.warn('MCP booking tool returned an application error', {
+        event: 'server.tool.book_slot.rejected',
+        station,
+        date,
+        time,
+        message: result.message,
+      });
       return { content: [{ type: 'text', text: `Booking failed: ${result.message}` }], isError: true };
     } catch (error) {
+      logToolFailure('book_slot', { station, date, time }, error);
       return { content: [{ type: 'text', text: `Error booking slot: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -132,10 +184,18 @@ server.tool(
     time: z.string().describe('Time in h:mmam/pm format (e.g. "5:00am", "1:30pm")'),
   },
   async ({ station_name, date, time }) => {
+    logToolStart('cancel_booking', { station_name, date, time });
     try {
       const result = await client.cancelBooking(station_name, date, time);
+      logToolComplete('cancel_booking', {
+        stationName: station_name,
+        date,
+        time,
+        success: result.success,
+      });
       return { content: [{ type: 'text', text: result.message }], isError: !result.success };
     } catch (error) {
+      logToolFailure('cancel_booking', { station_name, date, time }, error);
       return { content: [{ type: 'text', text: `Error cancelling booking: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -147,6 +207,7 @@ server.tool(
   'List upcoming reservations and remaining gym credits at MX3 Noe Valley.',
   {},
   async () => {
+    logToolStart('get_my_bookings', {});
     try {
       const [reservations, credits] = await Promise.all([
         client.getMyBookings(),
@@ -166,8 +227,13 @@ server.tool(
         }
       }
 
+      logToolComplete('get_my_bookings', {
+        reservationCount: reservations.length,
+        creditCount: credits,
+      });
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {
+      logToolFailure('get_my_bookings', {}, error);
       return { content: [{ type: 'text', text: `Error fetching bookings: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -191,16 +257,32 @@ server.tool(
     limit: z.number().optional().describe('Max results (default 50)'),
   },
   async ({ station, transition, since, limit }) => {
+    logToolStart('get_changes', { station, transition, since, limit });
     try {
       const changes = getChanges(getDb(), { station, transition, since, limit });
       if (changes.length === 0) {
+        logToolComplete('get_changes', {
+          station,
+          transition,
+          since,
+          limit: limit ?? null,
+          changeCount: 0,
+        });
         return { content: [{ type: 'text', text: 'No changes found. Make sure the poller is running (`npm run poller`).' }] };
       }
       const lines = changes.map(c =>
         `${c.detectedAt} | ${c.stationName} ${c.date} ${c.time} | ${c.fromStatus} → ${c.toStatus}`
       );
+      logToolComplete('get_changes', {
+        station,
+        transition,
+        since,
+        limit: limit ?? null,
+        changeCount: changes.length,
+      });
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {
+      logToolFailure('get_changes', { station, transition, since, limit }, error);
       return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -216,17 +298,31 @@ server.tool(
     days_back: z.number().optional().describe('How many days back to look (default 7)'),
   },
   async ({ station, day_of_week, days_back }) => {
+    logToolStart('get_trends', { station, day_of_week, days_back });
     try {
       const trends = getTrends(getDb(), { station, dayOfWeek: day_of_week, daysBack: days_back });
       if (trends.length === 0) {
+        logToolComplete('get_trends', {
+          station,
+          dayOfWeek: day_of_week ?? null,
+          daysBack: days_back ?? null,
+          trendCount: 0,
+        });
         return { content: [{ type: 'text', text: 'No trend data yet. The poller needs to run for at least a day.' }] };
       }
       const lines = ['| Date | Bookings | Cancellations | Net |', '|------|----------|---------------|-----|'];
       for (const t of trends) {
         lines.push(`| ${t.date} | ${t.bookings} | ${t.cancellations} | ${t.netBookings >= 0 ? '+' : ''}${t.netBookings} |`);
       }
+      logToolComplete('get_trends', {
+        station,
+        dayOfWeek: day_of_week ?? null,
+        daysBack: days_back ?? null,
+        trendCount: trends.length,
+      });
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {
+      logToolFailure('get_trends', { station, day_of_week, days_back }, error);
       return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -242,17 +338,31 @@ server.tool(
     days_back: z.number().optional().describe('How many days back to look (default 7)'),
   },
   async ({ group_by, station_type, days_back }) => {
+    logToolStart('get_popularity', { group_by, station_type, days_back });
     try {
       const results = getPopularity(getDb(), { groupBy: group_by, stationType: station_type, daysBack: days_back });
       if (results.length === 0) {
+        logToolComplete('get_popularity', {
+          groupBy: group_by,
+          stationType: station_type ?? null,
+          daysBack: days_back ?? null,
+          resultCount: 0,
+        });
         return { content: [{ type: 'text', text: 'No popularity data yet. The poller needs to collect data first.' }] };
       }
       const lines = ['| Group | Bookings | Cancellations | Utilization % |', '|-------|----------|---------------|---------------|'];
       for (const r of results) {
         lines.push(`| ${r.group} | ${r.bookingCount} | ${r.cancellationCount} | ${r.utilizationPct.toFixed(1)}% |`);
       }
+      logToolComplete('get_popularity', {
+        groupBy: group_by,
+        stationType: station_type ?? null,
+        daysBack: days_back ?? null,
+        resultCount: results.length,
+      });
       return { content: [{ type: 'text', text: lines.join('\n') }] };
     } catch (error) {
+      logToolFailure('get_popularity', { group_by, station_type, days_back }, error);
       return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -271,12 +381,17 @@ server.tool(
     days: z.array(z.string()).optional().describe('Days of week to watch: ["Mon","Tue","Wed"] (for "add")'),
   },
   async ({ action, watch_id, station_pattern, time_from, time_to, days }) => {
+    logToolStart('watch_slot', { action, watch_id, station_pattern, time_from, time_to, days });
     try {
       const db = getDb();
 
       if (action === 'list') {
         const watches = listWatches(db);
         if (watches.length === 0) {
+          logToolComplete('watch_slot', {
+            action,
+            watchCount: 0,
+          });
           return { content: [{ type: 'text', text: 'No watches configured. Use action "add" to create one.' }] };
         }
         const lines = watches.map(w => {
@@ -285,14 +400,26 @@ server.tool(
           if (w.days_of_week) parts.push(`days: ${w.days_of_week}`);
           return parts.join(' ');
         });
+        logToolComplete('watch_slot', {
+          action,
+          watchCount: watches.length,
+        });
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       }
 
       if (action === 'remove') {
         if (watch_id === undefined) {
+          logger.warn('Watch removal rejected due to missing watch_id', {
+            event: 'server.tool.watch_slot.invalid_remove',
+          });
           return { content: [{ type: 'text', text: 'watch_id is required for "remove" action' }], isError: true };
         }
         const removed = removeWatch(db, watch_id);
+        logToolComplete('watch_slot', {
+          action,
+          watchId: watch_id,
+          removed,
+        });
         return { content: [{ type: 'text', text: removed ? `Watch #${watch_id} deactivated` : `Watch #${watch_id} not found or already inactive` }] };
       }
 
@@ -303,8 +430,14 @@ server.tool(
         timeTo: time_to,
         daysOfWeek: days,
       });
+      logToolComplete('watch_slot', {
+        action,
+        watchId: id,
+        stationPattern: station_pattern || '*',
+      });
       return { content: [{ type: 'text', text: `Watch #${id} created: "${station_pattern || '*'}"${time_from ? ` from ${time_from}` : ''}${time_to ? ` to ${time_to}` : ''}${days ? ` on ${days.join(',')}` : ''}` }] };
     } catch (error) {
+      logToolFailure('watch_slot', { action, watch_id, station_pattern, time_from, time_to, days }, error);
       return { content: [{ type: 'text', text: `Error: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
     }
   }
@@ -312,11 +445,20 @@ server.tool(
 
 // --- Start server ---
 async function main() {
+  logger.info('Starting MX3 MCP server', {
+    event: 'server.startup.begin',
+  });
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  logger.info('MX3 MCP server connected to stdio transport', {
+    event: 'server.startup.connected',
+  });
 }
 
 main().catch((error) => {
-  console.error('Server failed to start:', error);
+  logger.error('MX3 MCP server failed to start', {
+    event: 'server.startup.failed',
+    error,
+  });
   process.exit(1);
 });
