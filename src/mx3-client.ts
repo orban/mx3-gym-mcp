@@ -1,5 +1,6 @@
 import { parseSchedule, parseCredits, parseReservations, parseBookingResponse, isSignInRequired, parseAvailableDates } from './parser.js';
 import { STATIONS, STATION_BY_NAME, type MX3ClientConfig, type TimeSlot, type BookingResult, type Reservation } from './types.js';
+import { logger } from './logger.js';
 
 const NOE_VALLEY_LOC_ID = '51550';
 
@@ -131,6 +132,11 @@ export class MX3Client {
   private async postWithAuth(path: string, body: string, isRetry = false): Promise<string> {
     // Login if we don't have cookies yet
     if (this.cookies.size === 0) {
+      logger.info('Authenticating MX3 session', {
+        event: 'mx3.auth.login_required',
+        path,
+        isRetry,
+      });
       await this.login();
     }
 
@@ -138,12 +144,20 @@ export class MX3Client {
 
     // Check for session expiry
     if (isSignInRequired(response) && !isRetry) {
+      logger.warn('MX3 session expired, retrying after re-authentication', {
+        event: 'mx3.auth.session_expired',
+        path,
+      });
       this.cookies.clear();
       await this.login();
       return this.postWithAuth(path, body, true);
     }
 
     if (isSignInRequired(response) && isRetry) {
+      logger.error('MX3 session retry failed after re-authentication', {
+        event: 'mx3.auth.retry_failed',
+        path,
+      });
       throw new Error('Session expired and re-authentication failed');
     }
 
@@ -160,6 +174,10 @@ export class MX3Client {
       loginReturnURL: this.locationPath,
       formSubmitFrom: 'memberLoginForm.php',
     });
+    logger.info('Submitting MX3 login request', {
+      event: 'mx3.auth.login_start',
+      path: this.locationPath,
+    });
     const response = await this.rawFetch(this.locationPath, params.toString());
 
     // Extract server-set cookies
@@ -173,13 +191,33 @@ export class MX3Client {
     }
 
     if (this.cookies.size < 2) {
+      logger.error('MX3 login did not yield session cookies', {
+        event: 'mx3.auth.login_failed',
+        path: this.locationPath,
+        cookieCount: this.cookies.size,
+      });
       throw new Error('Login failed: no session cookies received');
     }
+
+    logger.info('MX3 login completed', {
+      event: 'mx3.auth.login_success',
+      path: this.locationPath,
+      cookieCount: this.cookies.size,
+    });
   }
 
   private async post(path: string, body: string): Promise<string> {
     const response = await this.rawFetch(path, body);
     this.extractCookies(response);
+    if (!response.ok) {
+      logger.warn('MX3 request returned non-OK status', {
+        event: 'mx3.request.http_error',
+        path,
+        status: response.status,
+        statusText: response.statusText,
+        body,
+      });
+    }
     return await response.text();
   }
 
@@ -202,6 +240,15 @@ export class MX3Client {
       headers,
       body,
       redirect: 'manual',
+    });
+
+    logger.debug('Completed MX3 HTTP request', {
+      event: 'mx3.request.completed',
+      path,
+      status: response.status,
+      statusText: response.statusText,
+      body,
+      cookieCount: this.cookies.size,
     });
 
     return response;

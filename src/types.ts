@@ -67,3 +67,53 @@ export interface MX3ClientConfig {
   locationPath: string;
   credentials: { username: string; password: string };
 }
+
+// --- Shared time utilities (used by server.ts, change-detector, notifier) ---
+
+export function timeToMinutes(t: string): number {
+  const match = t.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+  if (!match) return 0;
+  let [, hStr, mStr, period] = match;
+  let h = parseInt(hStr, 10);
+  const m = parseInt(mStr, 10);
+  if (period.toLowerCase() === 'am' && h === 12) h = 0;
+  if (period.toLowerCase() === 'pm' && h !== 12) h += 12;
+  return h * 60 + m;
+}
+
+export function compareTimeStrings(a: string, b: string): number {
+  return timeToMinutes(a) - timeToMinutes(b);
+}
+
+// --- Change detection types ---
+
+export interface ChangeEvent {
+  stationId: number;
+  stationName: string;
+  date: string;
+  time: string;
+  fromStatus: SlotStatus;
+  toStatus: SlotStatus;
+  detectedAt: string;
+}
+
+// --- Watch / notification types ---
+
+export interface Watch {
+  id: number;
+  stationPattern: string;  // glob: "Noe *", "Noe 1", "*"
+  timeFrom: string | null;
+  timeTo: string | null;
+  daysOfWeek: string[] | null; // ["Mon","Tue","Wed"]
+  active: boolean;
+}
+
+// --- Station pattern matching (glob-style for watches) ---
+
+export function matchStationPattern(pattern: string, stationName: string): boolean {
+  if (pattern === '*') return true;
+  // Convert glob to regex: * → .*, ? → .
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  const regex = new RegExp(`^${escaped.replace(/\*/g, '.*').replace(/\?/g, '.')}$`, 'i');
+  return regex.test(stationName);
+}
