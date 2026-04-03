@@ -93,8 +93,36 @@ List upcoming reservations and remaining gym credits. No parameters.
 npm install
 npm run typecheck    # Type check
 npm test             # Run tests
+npm run test:flake   # Re-run Vitest and report intermittent failures
 npm start            # Start MCP server (requires MX3_USERNAME, MX3_PASSWORD)
 ```
+
+## Flaky Test Analysis
+
+Run the analyzer to loop the Vitest suite and summarize any intermittent failures:
+
+```sh
+npm run test:flake
+```
+
+Useful options:
+
+```sh
+npm run test:flake -- --runs=20
+npm run test:flake -- --file=tests/analytics.test.ts
+npm run test:flake -- --grep="getTrends"
+```
+
+The analyzer reports:
+
+- total runs and failed runs
+- unique failing files and tests
+- failure frequency for each failing file and test
+- a heuristic review of likely nondeterminism sources such as wall-clock time, locale formatting, random data, environment variables, and timer-based ordering
+
+It exits non-zero only when it finds intermittent failures, so stable red tests remain visible without being mislabeled as flakes.
+
+Current baseline in this repo: 10 consecutive clean runs with no observed flakes. The main residual risk area is time-sensitive coverage around analytics date windows and reservation year inference, which is now exercised with explicit reference dates in tests.
 
 ## How It Works
 
