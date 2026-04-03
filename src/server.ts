@@ -5,12 +5,15 @@ import { MX3Client } from './mx3-client.js';
 import { STATIONS, compareTimeStrings } from './types.js';
 import { openDatabase, addWatch, removeWatch, listWatches } from './db.js';
 import { getChanges, getTrends, getPopularity } from './analytics.js';
+import { createLogger } from './logger.js';
+
+const logger = createLogger('server');
 
 const username = process.env.MX3_USERNAME;
 const password = process.env.MX3_PASSWORD;
 
 if (!username || !password) {
-  console.error('MX3_USERNAME and MX3_PASSWORD environment variables are required');
+  logger.error('server.config.missing_credentials', 'MX3_USERNAME and MX3_PASSWORD environment variables are required');
   process.exit(1);
 }
 
@@ -312,11 +315,13 @@ server.tool(
 
 // --- Start server ---
 async function main() {
+  logger.info('server.starting', 'Starting MCP stdio server', { name: 'mx3-gym', version: '0.1.0' });
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  logger.info('server.started', 'MCP stdio server connected');
 }
 
 main().catch((error) => {
-  console.error('Server failed to start:', error);
+  logger.error('server.startup.failed', 'Server failed to start', error);
   process.exit(1);
 });

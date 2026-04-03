@@ -8,6 +8,7 @@ import { execFile } from 'child_process';
 import { matchesWatch, findMatchingWatches, processNotifications } from '../src/notifier.js';
 import type { ChangeEvent } from '../src/types.js';
 import type { WatchRow } from '../src/db.js';
+import { createLogger, type LogEntry } from '../src/logger.js';
 
 function makeEvent(overrides: Partial<ChangeEvent> = {}): ChangeEvent {
   return {
@@ -176,5 +177,31 @@ describe('processNotifications', () => {
       ['-e', expect.stringContaining('Noe 1')],
       expect.any(Function),
     );
+  });
+
+  it('logs notifier failure with actionable context', () => {
+    vi.mocked(execFile).mockImplementationOnce((_cmd: string, _args: string[], cb: Function) => {
+      cb(new Error('osascript unavailable'));
+      return {} as any;
+    });
+
+    const entries: LogEntry[] = [];
+    const logger = createLogger('test-notifier', {
+      level: 'debug',
+      writer: (entry) => entries.push(entry),
+    });
+
+    processNotifications(
+      [makeEvent({ stationId: 140, stationName: 'Noe 1', date: '2025-03-03', time: '5:00pm' })],
+      [makeWatch()],
+      logger,
+    );
+
+    expect(entries.some((entry) =>
+      entry.level === 'error' &&
+      entry.event === 'notifier.osascript.failed' &&
+      entry.context?.stationName === 'Noe 1' &&
+      entry.context?.time === '5:00pm'
+    )).toBe(true);
   });
 });

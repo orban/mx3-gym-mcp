@@ -94,7 +94,14 @@ npm install
 npm run typecheck    # Type check
 npm test             # Run tests
 npm start            # Start MCP server (requires MX3_USERNAME, MX3_PASSWORD)
+npm run poller       # Start poller loop (requires MX3_USERNAME, MX3_PASSWORD)
 ```
+
+## Logging
+
+- Structured JSON logging is used in poller/server/notifier/client runtime paths.
+- Set `LOG_LEVEL=debug` for verbose diagnostics (`info` is default).
+- Logging standards and event conventions: `docs/logging-audit.md`.
 
 ## How It Works
 
