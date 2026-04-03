@@ -135,14 +135,20 @@ export function getTrends(
     station?: string;
     dayOfWeek?: string;
     daysBack?: number;
+    now?: string;
   } = {},
 ): TrendRecord[] {
   const clauses: string[] = [];
   const params: unknown[] = [];
 
   const daysBack = opts.daysBack ?? 7;
-  clauses.push("detected_at >= date('now', ?)");
-  params.push(`-${daysBack} days`);
+  const nowExpr = opts.now ? 'date(?, ?)' : "date('now', ?)";
+  clauses.push(`detected_at >= ${nowExpr}`);
+  if (opts.now) {
+    params.push(opts.now, `-${daysBack} days`);
+  } else {
+    params.push(`-${daysBack} days`);
+  }
 
   if (opts.station) {
     const sid = resolveStationId(opts.station);
@@ -192,9 +198,13 @@ export function getPopularity(
     groupBy: 'station' | 'time' | 'day_of_week';
     stationType?: string;
     daysBack?: number;
+    now?: string;
   },
 ): PopularityRecord[] {
   const daysBack = opts.daysBack ?? 7;
+  const snapshotNowExpr = opts.now ? 'date(?, ?)' : "date('now', ?)";
+  const changeNowExpr = opts.now ? 'date(?, ?)' : "date('now', ?)";
+  const timeWindowParams = opts.now ? [opts.now, `-${daysBack} days`] : [`-${daysBack} days`];
 
   // Build station filter for stationType
   let stationFilter = '';
@@ -224,37 +234,37 @@ export function getPopularity(
   // Utilization from snapshots: use the most recent snapshot per (station, date, time)
   const utilizationRows = db
     .prepare(
-      `SELECT ${groupExpr} AS grp,
+        `SELECT ${groupExpr} AS grp,
               SUM(CASE WHEN status = 'reserved' THEN 1 ELSE 0 END) AS reserved_count,
               COUNT(*) AS total_count
        FROM (
          SELECT station_id, date, time, status,
                 ROW_NUMBER() OVER (PARTITION BY station_id, date, time ORDER BY poll_id DESC) AS rn
          FROM snapshots
-         WHERE polled_at >= date('now', ?)
+         WHERE polled_at >= ${snapshotNowExpr}
            ${stationFilter}
        )
        WHERE rn = 1
        GROUP BY grp`,
     )
     .all(
-      `-${daysBack} days`,
+      ...timeWindowParams,
       ...stationParams,
     ) as Array<{ grp: string | number; reserved_count: number; total_count: number }>;
 
   // Booking/cancellation counts from changes
   const changeRows = db
     .prepare(
-      `SELECT ${groupExpr} AS grp,
+        `SELECT ${groupExpr} AS grp,
               SUM(CASE WHEN to_status = 'reserved' THEN 1 ELSE 0 END) AS booking_count,
               SUM(CASE WHEN from_status = 'reserved' AND to_status = 'available' THEN 1 ELSE 0 END) AS cancel_count
        FROM changes
-       WHERE detected_at >= date('now', ?)
+       WHERE detected_at >= ${changeNowExpr}
          ${stationFilter}
        GROUP BY grp`,
     )
     .all(
-      `-${daysBack} days`,
+      ...timeWindowParams,
       ...stationParams,
     ) as Array<{ grp: string | number; booking_count: number; cancel_count: number }>;
 

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "test": "vitest run",
+    "test:flake": "tsx scripts/test-flakiness.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "poller": "tsx src/poller.ts"

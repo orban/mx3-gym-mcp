@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { parseSchedule, parseCredits, parseBookingResponse, parseReservations, isSignInRequired, MX3ParseError } from '../src/parser.js';
@@ -105,6 +105,15 @@ describe('parseBookingResponse', () => {
 });
 
 describe('parseReservations', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-02-01T00:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('returns empty array for empty HTML', () => {
     expect(parseReservations('')).toEqual([]);
   });
@@ -119,7 +128,7 @@ describe('parseReservations', () => {
     expect(reservations[0].stationId).toBe(140);
     expect(reservations[0].stationName).toBe('Noe 1');
     expect(reservations[0].time).toBe('9:00pm');
-    expect(reservations[0].date).toMatch(/-02-09$/);
+    expect(reservations[0].date).toBe('2026-02-09');
     expect(reservations[0].cancelParams).toEqual({
       v2: 'true',
       unreserve: '128242',
@@ -132,7 +141,7 @@ describe('parseReservations', () => {
     expect(reservations[1].stationId).toBe(142);
     expect(reservations[1].stationName).toBe('Noe 3');
     expect(reservations[1].time).toBe('6:00am');
-    expect(reservations[1].date).toMatch(/-02-10$/);
+    expect(reservations[1].date).toBe('2026-02-10');
     expect(reservations[1].cancelParams?.unreserve).toBe('128300');
   });
 });
