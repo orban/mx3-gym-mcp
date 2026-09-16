@@ -90,10 +90,11 @@ export function parseCredits(text: string): number {
 /**
  * Parse reservations from the full page HTML.
  *
- * The AJAX endpoint (getReservations=true&forMember=&layout=blank&ajax=true) returns
- * an empty string. Reservations are only available in the full page under
- * <div id="my_reservations">, with each booking as:
- *   <div>Noe 1: Monday 02/09 at 9:00pm <a href='reserve-noe-station?unreserve=128242'>cancel reservation</a></div>
+ * Reservations live under <div id="my_reservations">. Each booking is a child
+ * <div> with text like: "Noe 2: Thursday 02/12 at 1:30pm"
+ *
+ * If a cancel link (<a href="...?unreserve=ID">) is present, cancelParams are
+ * extracted. Otherwise the reservation is returned without cancel params.
  *
  * Must be called with: POST getReservations=true&forMember= (no layout=blank).
  */
@@ -103,34 +104,23 @@ export function parseReservations(html: string): Reservation[] {
   const $ = cheerio.load(html);
   const reservations: Reservation[] = [];
 
-  // Find cancel links with unreserve param — these are the reservations
-  $('a[href*="unreserve="]').each((_, el) => {
-    const a = $(el);
-    const href = a.attr('href') || '';
+  // Parse each child div inside #my_reservations
+  $('#my_reservations > div').each((_, el) => {
+    const div = $(el);
+    const text = div.text();
 
-    // Extract reservation ID from href: reserve-noe-station?unreserve=128242
-    const unreserveMatch = href.match(/unreserve=(\d+)/);
-    if (!unreserveMatch) return;
-    const reservationId = unreserveMatch[1];
-
-    // The parent div text contains: "Noe 1: Monday 02/09 at 9:00pm cancel reservation"
-    const row = a.parent();
-    const text = row.text();
-
-    // Extract time: look for h:mmam/pm pattern
+    // Extract time: h:mmam/pm
     const timeMatch = text.match(/(\d{1,2}:\d{2}(?:am|pm))/i);
     if (!timeMatch) return;
     const time = timeMatch[1].toLowerCase();
 
-    // Extract date: MM/DD format — convert to YYYY-MM-DD using current year
+    // Extract date: MM/DD → YYYY-MM-DD
     const dateMatch = text.match(/(\d{2})\/(\d{2})/);
-    let date = '';
-    if (dateMatch) {
-      const year = new Date().getFullYear();
-      date = `${year}-${dateMatch[1]}-${dateMatch[2]}`;
-    }
+    if (!dateMatch) return;
+    const year = new Date().getFullYear();
+    const date = `${year}-${dateMatch[1]}-${dateMatch[2]}`;
 
-    // Extract station name by matching against known stations
+    // Match station name against known stations
     let stationId: number | undefined;
     let stationName = '';
     for (const station of Object.values(STATIONS)) {
@@ -140,22 +130,26 @@ export function parseReservations(html: string): Reservation[] {
         break;
       }
     }
+    if (stationId === undefined) return;
 
-    if (stationId !== undefined && date && time) {
-      reservations.push({
-        stationId,
-        stationName,
-        date,
-        time,
-        cancelParams: {
+    // Extract cancel params if unreserve link is present
+    let cancelParams: Record<string, string> | undefined;
+    const cancelLink = div.find('a[href*="unreserve="]');
+    if (cancelLink.length > 0) {
+      const href = cancelLink.attr('href') || '';
+      const unreserveMatch = href.match(/unreserve=(\d+)/);
+      if (unreserveMatch) {
+        cancelParams = {
           v2: 'true',
-          unreserve: reservationId,
+          unreserve: unreserveMatch[1],
           resourceID: String(stationId),
           loadAjax: 'true',
           layout: 'blank',
-        },
-      });
+        };
+      }
     }
+
+    reservations.push({ stationId, stationName, date, time, cancelParams });
   });
 
   return reservations;
